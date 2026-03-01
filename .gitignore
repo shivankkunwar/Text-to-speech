@@ -1,0 +1,44 @@
+# Audio output
+audiobook/
+*.mp3
+
+# Raw extracted text
+raw_extracted/
+
+# TTS ready files (regenerable)
+tts_ready/
+
+# Original books/PDFs
+*.pdf
+*.epub
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+audiobook_log.txt
+
+# Temp files
+*.tmp
+temp/
