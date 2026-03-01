@@ -15,17 +15,40 @@ tts_dir.mkdir(exist_ok=True)
 
 def clean_for_tts(text: str) -> str:
     """Clean text for optimal TTS reading."""
-    # Remove page numbers and headers/footers (patterns like "Chapter X: Title" followed by page number)
-    text = re.sub(r'\n\s*\d+\s+Chapter \d+: [^\n]+\n', '\n', text)
-    text = re.sub(r'\n[^\n]+ \d+\n', '\n', text)  # Remove "Title 123" patterns
+    # Remove Table of Contents section entirely (everything between TOC header and Preface/Chapter 0)
+    text = re.sub(r'(Table of Contents.*?)(?=Preface|CHAPTER 0|CHAPTER 1)', '', text, flags=re.DOTALL)
     
+    # Remove any remaining TOC-style lines (title with dots then page number)
+    text = re.sub(r'\n[^\n]+[\.·]{5,}\s*\d+\n', '\n', text)
+    
+    # Remove page numbers and headers/footers
+    text = re.sub(r'\n\s*\d+\s+Chapter \d+: [^\n]+\n', '\n', text)
+    text = re.sub(r'\n\d+\s+[^\n]+\n', '\n', text)  # "123 Title" patterns
+    text = re.sub(r'\n[^\n]+\s+\d+\n', '\n', text)  # "Title 123" patterns
+
     # Remove standalone page numbers
     text = re.sub(r'^\d+$', '', text, flags=re.MULTILINE)
-    
+
     # Remove excessive whitespace
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = re.sub(r' +', ' ', text)
+
+    # Fix hyphenated line breaks (words split across lines)
+    text = re.sub(r'(\w+)-\n(\w+)', r'\1\2', text)
+
+    # Remove standalone page numbers
+    text = re.sub(r'^\d+$', '', text, flags=re.MULTILINE)
     
+    # Remove "Table of Contents" header lines
+    text = re.sub(r'\n\s*Table of Contents\s*\d*\n', '\n', text, flags=re.IGNORECASE)
+    
+    # Remove lines that are just numbers with "Table of Contents" nearby
+    text = re.sub(r'\n\d+\s+Table of Contents\s*\d*\n', '\n', text, flags=re.IGNORECASE)
+
+    # Remove excessive whitespace
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r' +', ' ', text)
+
     # Fix hyphenated line breaks (words split across lines)
     text = re.sub(r'(\w+)-\n(\w+)', r'\1\2', text)
     
@@ -46,21 +69,24 @@ def clean_for_tts(text: str) -> str:
     text = re.sub(r'^\s*•\s+', '• ', text, flags=re.MULTILINE)
     
     # Fix abbreviations for TTS
-    text = re.sub(r'\bGPU\b', 'G P U', text)
-    text = re.sub(r'\bAPI\b', 'A P I', text)
-    text = re.sub(r'\bLLM\b', 'language model', text)
-    text = re.sub(r'\bKV\b', 'key value', text)
-    text = re.sub(r'\bSQL\b', 'S Q L', text)
+    # Note: With en-US-AvaMultilingualNeural, most acronyms are handled correctly
+    # We keep them capitalized so the TTS engine recognizes them as initialisms
+    # Only expand ambiguous ones that might be mispronounced
+    
+    # Keep these as uppercase initialisms (Ava handles them correctly)
+    # GPU, API, LLM, SQL, IDE, CUDA, ONNX all stay capitalized
+    
+    # Expand these for clarity
     text = re.sub(r'\bB2B\b', 'business to business', text)
-    text = re.sub(r'\bAI\b', 'A I', text)
-    text = re.sub(r'\bML\b', 'machine learning', text)
-    text = re.sub(r'\bASR\b', 'speech recognition', text)
-    text = re.sub(r'\bTTS\b', 'text to speech', text)
-    text = re.sub(r'\bRAG\b', 'R A G', text)
+    text = re.sub(r'\bKV\b', 'key value', text)  # KV cache → key value cache
     text = re.sub(r'\bRecSys\b', 'recommendation systems', text)
-    text = re.sub(r'\bIDE\b', 'I D E', text)
-    text = re.sub(r'\bCUDA\b', 'C U D A', text)
-    text = re.sub(r'\bONNX\b', 'O N N X', text)
+    
+    # ASR and TTS are okay as-is, but expand for listeners unfamiliar with terms
+    text = re.sub(r'\bASR\b', 'automatic speech recognition', text)
+    text = re.sub(r'\bTTS\b', 'text to speech', text)
+    
+    # RAG - keep as initialism, Ava pronounces it correctly
+    # text = re.sub(r'\bRAG\b', 'retrieval augmented generation', text)  # Optional expansion
     
     # Fix numbers for TTS
     text = re.sub(r'(\d+)x', r'\1 times', text)
@@ -366,21 +392,42 @@ chapters = split_into_chapters(raw_text)
 
 print(f"Found {len(chapters)} chapters")
 
-# Save individual chapters
-for chapter_id, chapter_data in chapters.items():
-    content = format_list_items(chapter_data['content'])
+# Remove chapter_01 (Preface with TOC contamination)
+if 'chapter_01' in chapters:
+    del chapters['chapter_01']
+    print("Removed chapter_01 (Preface - TOC contamination)")
+
+# Renumber chapters starting from 01 with clean title in filename
+renumbered = {}
+for i, (chapter_id, chapter_data) in enumerate(chapters.items(), 1):
+    new_id = f"chapter_{i:02d}"
+    # Create clean title from chapter title (remove "Chapter X" prefix)
+    title_part = chapter_data['title'].lower()
+    title_part = re.sub(r'^chapter\s*\d*\s*[:\-]?\s*', '', title_part)  # Remove "Chapter X:" prefix
+    title_part = title_part.replace('/', '-')
+    title_part = re.sub(r'[^a-z0-9 -]', '', title_part)
+    title_part = '_'.join(title_part.split())[:40]  # Max 40 chars
     
+    renumbered[new_id] = {
+        'title': chapter_data['title'],
+        'content': chapter_data['content'],
+        'filename': f"{new_id}_{title_part}"
+    }
+
+# Save individual chapters
+for chapter_id, chapter_data in renumbered.items():
+    content = format_list_items(chapter_data['content'])
+
     # Add chapter announcement
     full_content = f"{chapter_data['title']}\n\n{content}"
-    
-    output_path = tts_dir / f"{chapter_id}.txt"
+
+    output_path = tts_dir / f"{chapter_data['filename']}.txt"
     output_path.write_text(full_content, encoding='utf-8')
-    print(f"Saved {output_path} ({len(content)} chars)")
+    print(f"Saved {output_path.name} ({len(content)} chars)")
 
 # Create full book
 full_book = []
-for chapter_id in sorted(chapters.keys()):
-    chapter_data = chapters[chapter_id]
+for chapter_id, chapter_data in renumbered.items():
     full_book.append(f"\n\n{'='*50}\n")
     full_book.append(f"{chapter_data['title']}\n")
     full_book.append(f"{'='*50}\n\n")
